@@ -1,290 +1,287 @@
-import jsonimport timeimport numpy as npimport streamlit as stfrom PIL import Image, ImageOpsfrom keras.models import load_modelimport paho.mqtt.client as mqtt
+import os
+import json
+import time
 
-=========================
+import streamlit as st
+from PIL import Image
 
-CONFIGURACIÓN GENERAL
+from bokeh.models.widgets import Button
+from bokeh.models import CustomJS
+from streamlit_bokeh_events import streamlit_bokeh_events
 
-=========================
+import paho.mqtt.client as paho
 
-st.set_page_config(page_title="Cerradura Inteligente por Gestos",page_icon="🔐",layout="centered")
 
-BROKER = "broker.hivemq.com"PORT = 1883TOPIC = "IMIA"CLIENT_ID = "APP_CERR_STREAMLIT"
+# =========================
+# CONFIGURACIÓN MQTT
+# =========================
 
-MODEL_PATH = "keras_model.h5"LABELS_PATH = "labels.txt"CONFIDENCE_THRESHOLD = 0.70
+BROKER = "broker.mqttdashboard.com"
+PORT = 1883
+TOPIC = "voice_ctrl"
+CLIENT_ID = "GIT-HUBC"
 
-=========================
 
-ESTILOS CSS
+# =========================
+# CONFIGURACIÓN STREAMLIT
+# =========================
 
-=========================
-
-st.markdown(""".stApp {background: linear-gradient(135deg, #eef8f4 0%, #f7fbff 100%);color: #1f2937;font-family: 'Segoe UI', sans-serif;}
-
-h1, h2, h3 {
-    color: #12372A;
-    font-weight: 800;
-}
-
-.main-card {
-    background: white;
-    padding: 28px;
-    border-radius: 22px;
-    box-shadow: 0 14px 35px rgba(0,0,0,0.08);
-    border: 1px solid #d8eee6;
-    margin-bottom: 24px;
-}
-
-.status-open {
-    background: #d1fae5;
-    color: #065f46;
-    padding: 18px;
-    border-radius: 16px;
-    font-size: 24px;
-    font-weight: 800;
-    text-align: center;
-    border: 1px solid #10b981;
-}
-
-.status-close {
-    background: #fee2e2;
-    color: #991b1b;
-    padding: 18px;
-    border-radius: 16px;
-    font-size: 24px;
-    font-weight: 800;
-    text-align: center;
-    border: 1px solid #ef4444;
-}
-
-.status-wait {
-    background: #fef3c7;
-    color: #92400e;
-    padding: 18px;
-    border-radius: 16px;
-    font-size: 20px;
-    font-weight: 700;
-    text-align: center;
-    border: 1px solid #f59e0b;
-}
-
-.metric-card {
-    background: #f8fafc;
-    padding: 16px;
-    border-radius: 16px;
-    border: 1px solid #e5e7eb;
-    text-align: center;
-}
-
-.small-text {
-    font-size: 14px;
-    color: #6b7280;
-    line-height: 1.5;
-}
-
-div.stButton > button {
-    background-color: #12372A;
-    color: white;
-    border-radius: 14px;
-    padding: 0.7rem 1.4rem;
-    border: none;
-    font-weight: 700;
-}
-
-div.stButton > button:hover {
-    background-color: #0f2e24;
-    color: white;
-}
-</style>
-""",
-unsafe_allow_html=True
-
+st.set_page_config(
+    page_title="Control por Voz",
+    page_icon="🎙️",
+    layout="centered"
 )
 
-=========================
 
-FUNCIONES
-
-=========================
-
-@st.cache_resourcedef load_keras_model():"""Carga el modelo entrenado de Teachable Machine."""return load_model(MODEL_PATH, compile=False)
-
-@st.cache_datadef load_labels():"""Carga las etiquetas desde labels.txt."""labels = []
-
-with open(LABELS_PATH, "r", encoding="utf-8") as file:
-    for line in file.readlines():
-        label = line.strip().split(" ", 1)
-        if len(label) == 2:
-            labels.append(label[1])
-
-return labels
-
-def preprocess_image(image):"""Preprocesa la imagen para que tenga el formato esperado por Teachable Machine:224 x 224 píxeles, RGB y normalización entre -1 y 1."""image = ImageOps.fit(image, (224, 224), Image.Resampling.LANCZOS)image_array = np.asarray(image).astype(np.float32)
-
-normalized_image_array = (image_array / 127.5) - 1
-
-data = np.ndarray(shape=(1, 224, 224, 3), dtype=np.float32)
-data[0] = normalized_image_array
-
-return data
-
-def connect_mqtt():"""Crea y conecta el cliente MQTT."""client = mqtt.Client(CLIENT_ID)client.connect(BROKER, PORT, 60)return client
-
-def send_mqtt_command(command):"""Envía el comando al tópico MQTT usado por Wokwi."""client = connect_mqtt()
-
-payload = {
-    "gesto": command
-}
-
-client.publish(TOPIC, json.dumps(payload), qos=0, retain=False)
-client.disconnect()
-
-return payload
-
-def predict_gesture(model, labels, image):"""Realiza la predicción del gesto."""processed_image = preprocess_image(image)prediction = model.predict(processed_image)
-
-index = int(np.argmax(prediction))
-confidence = float(prediction[0][index])
-label = labels[index]
-
-return label, confidence, prediction
-
-=========================
-
-INTERFAZ
-
-=========================
-
-st.markdown("""🔐 Cerradura Inteligente por GestosEsta aplicación reconoce gestos mediante un modelo entrenado en Teachable Machiney envía comandos por MQTT para controlar una cerradura simulada en Wokwi.""",unsafe_allow_html=True)
-
-with st.sidebar:st.header("⚙️ Configuración")
-
-st.write("**Broker MQTT**")
-st.code(BROKER)
-
-st.write("**Puerto**")
-st.code(str(PORT))
-
-st.write("**Tópico**")
-st.code(TOPIC)
-
-st.write("**Umbral de confianza**")
-confidence_threshold = st.slider(
-    "Selecciona el mínimo de confianza",
-    min_value=0.30,
-    max_value=0.95,
-    value=CONFIDENCE_THRESHOLD,
-    step=0.05
-)
-
-st.divider()
+# =========================
+# ESTILOS
+# =========================
 
 st.markdown(
     """
-    **Gestos esperados:**
+    <style>
+    .stApp {
+        background: linear-gradient(135deg, #eef7ff 0%, #f8fbff 100%);
+        color: #1f2937;
+        font-family: 'Segoe UI', sans-serif;
+    }
 
-    🖐️ Gesto para abrir  
-    ✊ Gesto para cerrar
+    h1 {
+        color: #1e3a8a;
+        text-align: center;
+        font-weight: 800;
+    }
+
+    h2, h3 {
+        color: #1e40af;
+    }
+
+    .main-card {
+        background: white;
+        padding: 28px;
+        border-radius: 22px;
+        box-shadow: 0 12px 30px rgba(0,0,0,0.08);
+        border: 1px solid #dbeafe;
+        text-align: center;
+        margin-bottom: 24px;
+    }
+
+    .command-card {
+        background: #eff6ff;
+        padding: 18px;
+        border-radius: 16px;
+        border-left: 6px solid #2563eb;
+        font-size: 18px;
+        margin-top: 20px;
+    }
+
+    .success-card {
+        background: #dcfce7;
+        color: #166534;
+        padding: 16px;
+        border-radius: 14px;
+        border: 1px solid #22c55e;
+        font-weight: 700;
+        text-align: center;
+    }
+
+    .warning-card {
+        background: #fef3c7;
+        color: #92400e;
+        padding: 16px;
+        border-radius: 14px;
+        border: 1px solid #f59e0b;
+        font-weight: 700;
+        text-align: center;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# =========================
+# FUNCIONES MQTT
+# =========================
+
+def on_publish(client, userdata, result):
+    print("El dato ha sido publicado correctamente")
+
+
+def publish_command(command):
+    client = paho.Client(CLIENT_ID)
+    client.on_publish = on_publish
+    client.connect(BROKER, PORT)
+
+    message = json.dumps({
+        "Act1": command
+    })
+
+    client.publish(TOPIC, message)
+    client.disconnect()
+
+    return message
+
+
+# =========================
+# NORMALIZAR COMANDOS
+# =========================
+
+def normalize_command(text):
+    text = text.lower().strip()
+
+    if "enciende" in text and "luces" in text:
+        return "enciende las luces"
+
+    if "apaga" in text and "luces" in text:
+        return "apaga las luces"
+
+    if "abre" in text and "puerta" in text:
+        return "abre la puerta"
+
+    if "cierra" in text and "puerta" in text:
+        return "Cierra la puerta"
+
+    return text
+
+
+# =========================
+# INTERFAZ
+# =========================
+
+st.markdown(
+    """
+    <div class="main-card">
+        <h1>🎙️ Interfaces Multimodales</h1>
+        <h3>Control por voz</h3>
+        <p>
+            Toca el botón, di un comando y la app enviará la orden por MQTT
+            al circuito simulado en Wokwi.
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+try:
+    image = Image.open("voice-control-572x650.jpg")
+    st.image(image, width=220)
+except Exception:
+    st.warning("No se encontró la imagen del proyecto. Revisa el nombre del archivo.")
+
+st.markdown("### Comandos que puedes decir")
+
+st.code(
+    """
+enciende las luces
+apaga las luces
+abre la puerta
+cierra la puerta
     """
 )
 
-try:model = load_keras_model()labels = load_labels()
+st.write("Presiona el botón y habla:")
 
-st.success("Modelo cargado correctamente.")
 
-except Exception as error:st.error("No se pudo cargar el modelo o las etiquetas.")st.code(str(error))st.stop()
+# =========================
+# BOTÓN DE RECONOCIMIENTO DE VOZ
+# =========================
 
-st.markdown("### 📷 Captura el gesto")
+stt_button = Button(label="🎤 Iniciar reconocimiento", width=280)
 
-img_file_buffer = st.camera_input("Toma una foto del gesto frente a la cámara")
+stt_button.js_on_event(
+    "button_click",
+    CustomJS(
+        code="""
+        var recognition = new webkitSpeechRecognition();
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        recognition.lang = "es-ES";
 
-if img_file_buffer is not None:image = Image.open(img_file_buffer).convert("RGB")
+        recognition.onresult = function (e) {
+            var value = "";
 
-st.image(
-    image,
-    caption="Imagen capturada",
-    use_container_width=True
+            for (var i = e.resultIndex; i < e.results.length; ++i) {
+                if (e.results[i].isFinal) {
+                    value += e.results[i][0].transcript;
+                }
+            }
+
+            if (value != "") {
+                document.dispatchEvent(
+                    new CustomEvent("GET_TEXT", {detail: value})
+                );
+            }
+        }
+
+        recognition.start();
+        """
+    )
 )
 
-with st.spinner("Analizando gesto..."):
-    label, confidence, raw_prediction = predict_gesture(model, labels, image)
+result = streamlit_bokeh_events(
+    stt_button,
+    events="GET_TEXT",
+    key="listen",
+    refresh_on_update=False,
+    override_height=90,
+    debounce_time=0
+)
 
-col1, col2 = st.columns(2)
 
-with col1:
+# =========================
+# ENVÍO DEL COMANDO
+# =========================
+
+if result and "GET_TEXT" in result:
+    original_text = result.get("GET_TEXT")
+    command = normalize_command(original_text)
+
     st.markdown(
         f"""
-        <div class="metric-card">
-            <h3>Gesto detectado</h3>
-            <p style="font-size: 26px; font-weight: 800;">{label}</p>
+        <div class="command-card">
+            <strong>Texto reconocido:</strong><br>
+            {original_text}
         </div>
         """,
         unsafe_allow_html=True
     )
 
-with col2:
     st.markdown(
         f"""
-        <div class="metric-card">
-            <h3>Confianza</h3>
-            <p style="font-size: 26px; font-weight: 800;">{confidence:.2%}</p>
+        <div class="command-card">
+            <strong>Comando enviado:</strong><br>
+            {command}
         </div>
         """,
         unsafe_allow_html=True
     )
 
-st.divider()
-
-if confidence >= confidence_threshold:
-    if label.lower() == "abre":
-        payload = send_mqtt_command("Abre")
+    try:
+        message = publish_command(command)
 
         st.markdown(
             """
-            <div class="status-open">
-                🔓 Cerradura abierta
+            <div class="success-card">
+                ✅ Comando enviado correctamente a Wokwi por MQTT
             </div>
             """,
             unsafe_allow_html=True
         )
 
-        st.write("Comando enviado por MQTT:")
-        st.json(payload)
+        st.write("Mensaje MQTT enviado:")
+        st.code(message)
 
-    elif label.lower() == "cierra":
-        payload = send_mqtt_command("Cierra")
-
-        st.markdown(
-            """
-            <div class="status-close">
-                🔒 Cerradura cerrada
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        st.write("Comando enviado por MQTT:")
-        st.json(payload)
-
-    else:
-        st.warning("El modelo detectó una clase no configurada para la cerradura.")
+    except Exception as error:
+        st.error("No se pudo enviar el mensaje por MQTT.")
+        st.code(str(error))
 
 else:
     st.markdown(
         """
-        <div class="status-wait">
-            ⚠️ Gesto no reconocido con suficiente confianza
+        <div class="warning-card">
+            Esperando comando de voz...
         </div>
         """,
         unsafe_allow_html=True
     )
-
-    st.info(
-        "Intenta tomar la foto con mejor iluminación, la mano más centrada "
-        "y un fondo más limpio."
-    )
-
-with st.expander("Ver probabilidades del modelo"):
-    for i, class_name in enumerate(labels):
-        st.write(f"**{class_name}:** {raw_prediction[0][i]:.2%}")
-
-else:st.info("Toma una foto para iniciar el reconocimiento del gesto.")
